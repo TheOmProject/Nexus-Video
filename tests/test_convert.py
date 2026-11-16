@@ -236,6 +236,48 @@ class TestGenerateStill:
         assert still.stat().st_size == expected
         assert still.read_bytes() == bytes(expected)
 
+    def test_generate_still_32bpp_black_frame(self, tmp_path):
+        # 32bpp (BCM2708/BGRA) — no source, black frame, 4 bytes per pixel
+        display_32 = DisplayInfo(
+            width=800, height=480, bpp=32, stride=3200,
+            r_off=16, r_len=8, g_off=8, g_len=8, b_off=0, b_len=8,
+        )
+        still = generate_still(tmp_path, display_32)
+        expected = 800 * 480 * 4
+        assert still.exists()
+        assert still.stat().st_size == expected
+        assert still.read_bytes() == bytes(expected)
+
+    def test_generate_still_32bpp_uses_correct_pix_fmt(self, tmp_path):
+        # Verify the FFmpeg command uses the display's native pix_fmt for 32bpp
+        display_32 = DisplayInfo(
+            width=800, height=480, bpp=32, stride=3200,
+            r_off=16, r_len=8, g_off=8, g_len=8, b_off=0, b_len=8,
+        )
+        src = tmp_path / "src.mp4"
+        src.write_bytes(b"\x00")
+        captured_cmd = []
+
+        def capture(cmd, **kw):
+            captured_cmd.extend(cmd)
+            # Pretend ffmpeg created the still at the correct size
+            out = tmp_path / STILL_FILENAME
+            out.write_bytes(bytes(800 * 480 * 4))
+            return MagicMock(returncode=0)
+
+        with patch("nexus_video.convert.subprocess.run", side_effect=capture):
+            generate_still(tmp_path, display_32, source=src)
+
+        assert "bgra" in captured_cmd, f"Expected 'bgra' in cmd, got: {captured_cmd}"
+        assert "rgb565le" not in captured_cmd, "Should NOT use rgb565le for 32bpp"
+
+    def test_generate_still_raises_when_pix_fmt_unknown(self, tmp_path):
+        # 32bpp without channel info → pix_fmt is None → should raise
+        from nexus_video.convert import ConversionError
+        display_unknown = DisplayInfo(width=800, height=480, bpp=32, stride=3200)
+        with pytest.raises(ConversionError, match="pixel format unknown"):
+            generate_still(tmp_path, display_unknown)
+
 
 # ---------------------------------------------------------------------------
 # validate_output
@@ -246,7 +288,7 @@ class TestValidateOutput:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / INTRO_FILENAME).write_bytes(b"\x00\x01\x02")
         (out_dir / LOOP_FILENAME).write_bytes(b"\x00\x01\x02")
-        expected = display.width * display.height * 2
+        expected = display.width * display.height * display.bytes_per_pixel
         (out_dir / STILL_FILENAME).write_bytes(bytes(expected))
 
     def test_no_errors_for_valid_output(self, tmp_path, display):
@@ -290,6 +332,24 @@ class TestValidateOutput:
         errors = validate_output(tmp_path, display)
         error_text = " ".join(errors)
         assert str(display.width) in error_text
+
+    def test_validate_output_32bpp_correct_size(self, tmp_path):
+        # 32bpp still must be w*h*4 bytes; w*h*2 (16bpp size) should fail
+        display_32 = DisplayInfo(
+            width=800, height=480, bpp=32, stride=3200,
+            r_off=16, r_len=8, g_off=8, g_len=8, b_off=0, b_len=8,
+        )
+        out_dir = tmp_path / "pack"
+        out_dir.mkdir()
+        (out_dir / INTRO_FILENAME).write_bytes(b"\x00")
+        (out_dir / LOOP_FILENAME).write_bytes(b"\x00")
+        # Correct 32bpp size
+        (out_dir / STILL_FILENAME).write_bytes(bytes(800 * 480 * 4))
+        assert validate_output(out_dir, display_32) == []
+        # Wrong size (16bpp bytes for a 32bpp display)
+        (out_dir / STILL_FILENAME).write_bytes(bytes(800 * 480 * 2))
+        errors = validate_output(out_dir, display_32)
+        assert any("still" in e.lower() for e in errors)
 
 
 # ---------------------------------------------------------------------------

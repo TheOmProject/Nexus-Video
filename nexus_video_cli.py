@@ -104,9 +104,10 @@ def cmd_detect(args: argparse.Namespace) -> int:
     print(f"  Frame size : {info.frame_bytes:,} bytes")
     print(f"  Framebuffer: {info.fb_path}")
     if info.is_supported:
-        print(f"  Pipeline   : {_ok('RGB565 ✓')}")
+        print(f"  Pix format : {_ok(info.pix_fmt or '?')} ✓")
+        print(f"  Pipeline   : {_ok('supported')}")
     elif info.needs_rgb32_pipeline:
-        print(f"  Pipeline   : {_warn('32-bit detected — not yet supported in Phase 2')}")
+        print(f"  Pipeline   : {_warn('32bpp — channel layout unknown (run as root for ioctl detection)')}")
     else:
         print(f"  Pipeline   : {_err(f'bpp={info.bpp} not supported')}")
     return 0
@@ -174,7 +175,14 @@ def cmd_convert(args: argparse.Namespace) -> int:
         display_info = DisplayInfo(FALLBACK_WIDTH, FALLBACK_HEIGHT, FALLBACK_BPP, FALLBACK_STRIDE)
 
     if not display_info.is_supported:
-        print(_err(f"Display bpp={display_info.bpp} is not supported (need 16-bit RGB565)."))
+        if display_info.bpp == 32:
+            print(_err(
+                f"Display is 32bpp but channel layout is unknown — cannot determine pixel format.\n"
+                f"  Run as root (sudo) so the installer can read /dev/fb0 via ioctl.\n"
+                f"  Alternatively pass --fb /dev/fb0 if running as a non-root user with fb access."
+            ))
+        else:
+            print(_err(f"Display bpp={display_info.bpp} is not supported."))
         return 1
 
     scale_mode = args.scale_mode

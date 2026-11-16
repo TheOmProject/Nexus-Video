@@ -134,16 +134,32 @@ def generate_still(
     source: Optional[Path] = None,
     timestamp: float = 0.5,
 ) -> Path:
-    """Generate a still.rgb565 file for the framebuffer hold-still state.
+    """Generate a still frame file for the framebuffer hold-still state.
+
+    The output format matches the display's native pixel format (RGB565 for
+    16bpp, or the detected ARGB/RGBA/BGRA/ABGR format for 32bpp).  The file
+    is always named STILL_FILENAME; its content is raw framebuffer bytes that
+    can be written directly to /dev/fb0.
 
     If *source* is given, extracts the frame at *timestamp* seconds and
-    converts it to RGB565. Otherwise writes a solid black frame.
+    converts it to the display's native pixel format.  Otherwise writes a
+    solid black frame.
 
     Returns the path to the generated file.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     still_path = output_dir / STILL_FILENAME
-    expected_bytes = display_info.width * display_info.height * 2  # 16-bit
+
+    bpp = display_info.bpp
+    pix_fmt = display_info.pix_fmt
+    if pix_fmt is None:
+        raise ConversionError(
+            f"Cannot generate still: pixel format unknown for {bpp}bpp display "
+            f"(channel info unavailable — run installer as root with /dev/fb0 readable)"
+        )
+
+    bytes_pp = display_info.bytes_per_pixel
+    expected_bytes = display_info.width * display_info.height * bytes_pp
 
     if source is not None and source.exists():
         cmd = [
@@ -153,7 +169,7 @@ def generate_still(
             "-vframes", "1",
             "-vf", scale_filter("fit", display_info.width, display_info.height),
             "-f", "rawvideo",
-            "-pix_fmt", "rgb565le",
+            "-pix_fmt", pix_fmt,
             str(still_path),
         ]
         try:
@@ -161,7 +177,10 @@ def generate_still(
             if result.returncode == 0 and still_path.exists():
                 actual = still_path.stat().st_size
                 if actual == expected_bytes:
-                    log.info("Generated still from %s (%d bytes)", source.name, actual)
+                    log.info(
+                        "Generated still from %s (%d bytes, %s)",
+                        source.name, actual, pix_fmt,
+                    )
                     return still_path
                 log.warning(
                     "Still frame size mismatch: got %d, expected %d — falling back to black",
@@ -170,9 +189,9 @@ def generate_still(
         except (subprocess.TimeoutExpired, OSError) as exc:
             log.warning("Still frame extraction failed (%s) — using black frame", exc)
 
-    # Fallback: write solid black frame
+    # Fallback: write solid black frame (all-zero bytes = black in all formats)
     still_path.write_bytes(bytes(expected_bytes))
-    log.info("Generated black still frame (%d bytes)", expected_bytes)
+    log.info("Generated black still frame (%d bytes, %s)", expected_bytes, pix_fmt)
     return still_path
 
 
@@ -245,7 +264,8 @@ def validate_output(output_dir: Path, display_info: DisplayInfo) -> list[str]:
     Returns a list of error strings (empty list = all good).
     """
     errors: list[str] = []
-    expected_still = display_info.width * display_info.height * 2
+    bytes_pp = display_info.bytes_per_pixel
+    expected_still = display_info.width * display_info.height * bytes_pp
 
     for filename in (INTRO_FILENAME, LOOP_FILENAME):
         p = output_dir / filename
@@ -260,7 +280,7 @@ def validate_output(output_dir: Path, display_info: DisplayInfo) -> list[str]:
     elif still.stat().st_size != expected_still:
         errors.append(
             f"{STILL_FILENAME} is {still.stat().st_size} bytes, "
-            f"expected {expected_still} ({display_info.width}×{display_info.height}×2)"
+            f"expected {expected_still} ({display_info.width}×{display_info.height}×{bytes_pp})"
         )
 
     return errors

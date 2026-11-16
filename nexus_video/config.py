@@ -44,8 +44,9 @@ FALLBACK_HEIGHT  = 480
 FALLBACK_BPP     = 16
 FALLBACK_STRIDE  = 1600            # = 800 * 2
 
-SUPPORTED_BPP    = {16}            # only RGB565 currently supported
-WARN_BPP         = {32}            # detected but not yet supported
+SUPPORTED_BPP    = {16, 32}        # RGB565 (16bpp) and ARGB/RGBA/BGRA/ABGR (32bpp)
+WARN_BPP         = set()           # 32bpp fully supported; kept for API compatibility
+FALLBACK_PIX_FMT = "rgb565le"      # FFmpeg pix_fmt for fallback 16bpp display
 
 # ---------------------------------------------------------------------------
 # Scaling

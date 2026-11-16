@@ -119,17 +119,27 @@ def resolve_pack(build_dir: str, config: dict) -> tuple[str, str, str, str]:
 
 class Framebuffer:
     # FFmpeg pix_fmt name keyed by (bpp, r_off, r_len, g_off, g_len, b_off, b_len).
+    # Channel offsets are Linux fb bit-positions in a little-endian uint32:
+    #   bits 0-7 = byte[0] in memory (lowest address).
+    # BCM2708 (r@16, g@8, b@0): byte order B,G,R,A → FFmpeg "bgra".
     _FMT_MAP = {
-        (16, 11, 5,  5, 6,  0, 5): "rgb565le",
-        (32,  8, 8, 16, 8, 24, 8): "bgra",
+        (16, 11, 5,  5, 6,  0, 5): "rgb565le",   # RGB565 (16bpp)
+        (32, 16, 8,  8, 8,  0, 8): "bgra",        # BCM2708 Voron StealthChanger
         (32,  0, 8,  8, 8, 16, 8): "rgba",
-        (32, 16, 8,  8, 8,  0, 8): "argb",
+        (32,  8, 8, 16, 8, 24, 8): "argb",
         (32, 24, 8, 16, 8,  8, 8): "abgr",
     }
 
+    # FBIOGET_VSCREENINFO ioctl and struct offsets (matches Linux <linux/fb.h>)
+    _FBIOGET_VSCREENINFO = 0x4600
+    _VSCSI_BPP   = 24
+    _VSCSI_R_OFF = 32;  _VSCSI_R_LEN = 36
+    _VSCSI_G_OFF = 44;  _VSCSI_G_LEN = 48
+    _VSCSI_B_OFF = 56;  _VSCSI_B_LEN = 60
+
     def __init__(self, path):
         self.fd = os.open(path, os.O_RDWR)
-        # Sensible defaults for non-sysfs paths (unit tests, pipes).
+        # Sensible defaults for non-fb paths (unit tests, pipes).
         self.w, self.h, self.bpp = 800, 480, 16
         self.bytes_pp = 2
         self.stride = self.w * self.bytes_pp
@@ -140,33 +150,47 @@ class Framebuffer:
             self.w, self.h = map(int, size_str.split(","))
             self.bpp = int(open(sysfs + "/bits_per_pixel").read())
             self.bytes_pp = self.bpp // 8
+            self.stride = int(open(sysfs + "/stride").read())
             if self.w < MIN_W or self.h < MIN_H:
                 raise SystemExit(
                     f"nexus-video: display {self.w}×{self.h} is below the minimum "
                     f"{MIN_W}×{MIN_H} — not drawing"
                 )
-            fmt = self._detect_format(sysfs)
+            fmt = self._detect_format(path)
             if fmt is None:
                 raise SystemExit(
-                    f"nexus-video: {path} pixel format ({self.bpp}bpp) is not supported. "
-                    f"Supported: RGB565 (16bpp), BGRA8888/RGBA8888/ARGB8888/ABGR8888 (32bpp)"
+                    f"nexus-video: {path} pixel format ({self.bpp}bpp) channel layout "
+                    f"could not be detected. Supported: RGB565 (16bpp), "
+                    f"BGRA/RGBA/ARGB/ABGR (32bpp)"
                 )
             self.pix_fmt = fmt
-            self.stride = int(open(sysfs + "/stride").read())
 
-    @staticmethod
-    def _read_channel(sysfs, name):
+    def _detect_format(self, fb_path: str) -> "str | None":
+        """Detect FFmpeg pixel format via FBIOGET_VSCREENINFO ioctl.
+
+        Uses ioctl on the framebuffer device (reliable on BCM2708 and VC4;
+        the per-channel sysfs files are absent on BCM2708).
+        Falls back to assuming rgb565le for 16bpp when ioctl is unavailable.
+        """
+        import struct, fcntl
         try:
-            parts = open(f"{sysfs}/{name}").read().strip().split(",")
-            return int(parts[0]), int(parts[1])  # offset, length
-        except (OSError, ValueError, IndexError):
-            return -1, 0
-
-    def _detect_format(self, sysfs):
-        r_off, r_len = self._read_channel(sysfs, "red")
-        g_off, g_len = self._read_channel(sysfs, "green")
-        b_off, b_len = self._read_channel(sysfs, "blue")
-        return self._FMT_MAP.get((self.bpp, r_off, r_len, g_off, g_len, b_off, b_len))
+            with open(fb_path, "rb") as f:
+                buf = bytearray(160)
+                fcntl.ioctl(f, self._FBIOGET_VSCREENINFO, buf)
+            r_off = struct.unpack_from("<I", buf, self._VSCSI_R_OFF)[0]
+            r_len = struct.unpack_from("<I", buf, self._VSCSI_R_LEN)[0]
+            g_off = struct.unpack_from("<I", buf, self._VSCSI_G_OFF)[0]
+            g_len = struct.unpack_from("<I", buf, self._VSCSI_G_LEN)[0]
+            b_off = struct.unpack_from("<I", buf, self._VSCSI_B_OFF)[0]
+            b_len = struct.unpack_from("<I", buf, self._VSCSI_B_LEN)[0]
+            fmt = self._FMT_MAP.get((self.bpp, r_off, r_len, g_off, g_len, b_off, b_len))
+            if fmt is None and self.bpp == 16:
+                return "rgb565le"   # safe default for all Pi 16bpp displays
+            return fmt
+        except (OSError, ImportError):
+            if self.bpp == 16:
+                return "rgb565le"   # ioctl unavailable — safe for 16bpp
+            return None             # 32bpp needs channel info
 
     def frame_size(self):
         return self.w * self.h * self.bytes_pp
