@@ -6,7 +6,7 @@ Nexus Video is an **optional add-on** for Nexus Screen. It replaces the default 
 with animated startup video packs. It plays a 10-second intro once at boot, then loops ambient
 video while the printer connects — with no desktop environment required.
 
-**Status: Public Beta — v0.1.0-beta.1**  
+**Status: Released — v0.1.1**  
 Requires [Nexus Screen](https://github.com/TheOmProject/Nexus-Screen) v0.2.0-beta.5 or later.
 
 ---
@@ -127,6 +127,24 @@ bash ~/nexus-video/deploy/uninstall.sh
 
 Uninstalling re-enables `nexus-splash.service` and removes `nexus-video.service`.
 Your `packs/custom/` files are not deleted.
+
+---
+
+## Raw Video Auto-Discovery
+
+Drop any `.mp4`, `.mkv`, `.mov`, `.avi`, or `.webm` file into `~/nexus-video/packs/custom/` and it will appear in **Settings → Startup Video** automatically — no `pack.json`, no restart, no config change required.
+
+```
+~/nexus-video/packs/custom/
+  my_timelapse.mp4   ← appears in Nexus Screen immediately
+  boot_loop.mkv      ← appears in Nexus Screen immediately
+  my_pack/           ← subfolder with pack.json = standard custom pack
+    pack.json
+    intro.mp4
+    loop.mp4
+```
+
+When you tap **Apply** on a raw video file, Nexus Screen copies it and extracts a thumbnail in the background (takes about 1 second) while showing a "Preparing Video…" indicator. The pack grid refreshes automatically when ready. The `packs/custom/` directory is never modified by updates.
 
 ---
 
