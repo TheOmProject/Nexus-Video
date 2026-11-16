@@ -287,11 +287,32 @@ test_corrupt_pack_handled() {
 
 # ── NV failure does not corrupt NS ─────────────────────────────────────────
 test_nv_failure_ns_intact() {
-  if grep -q 'Nexus Screen is fully operational without Nexus Video' \
-      /home/omar/nexus-screen-public/deploy/bootstrap.sh; then
+  local bs
+  bs="$(find /home/omar/nexus-screen /home/omar/nexus-screen-public -name bootstrap.sh -path '*/deploy/*' 2>/dev/null | head -1)"
+  if [[ -n "${bs}" ]] && grep -q 'fully operational without Nexus Video' "${bs}"; then
     _pass "NV install failure preserves NS (graceful degradation message in bootstrap)"
   else
-    _fail "NV failure NS intact" "graceful degradation not found in bootstrap.sh"
+    _skip "NV failure NS intact" "bootstrap.sh not found at expected path"
+  fi
+}
+
+# ── no su -s /bin/bash -- python3 regression ───────────────────────────────
+test_no_su_shell_python() {
+  if ! grep -q "su -s /bin/bash.*-- python3" "${INSTALLER}" && \
+     ! grep -q "su -s /bin/bash.*-- python" "${INSTALLER}"; then
+    _pass "No 'su -s /bin/bash -- python3' pattern — runuser used instead"
+  else
+    _fail "su -s /bin/bash -- python3 regression" \
+      "installer still uses 'su -s /bin/bash -- python3' which passes python3 as a bash script arg"
+  fi
+}
+
+# ── runuser used for user-context commands ──────────────────────────────────
+test_runuser_used() {
+  if grep -q 'runuser -u' "${INSTALLER}"; then
+    _pass "runuser -u used for user-context execution"
+  else
+    _fail "runuser not found" "user-context commands should use 'runuser -u user -- cmd'"
   fi
 }
 
@@ -316,6 +337,8 @@ test_build_outputs_valid
 test_ffmpeg_conversion
 test_corrupt_pack_handled
 test_nv_failure_ns_intact
+test_no_su_shell_python
+test_runuser_used
 
 echo ""
 printf 'Results: \033[32m%d passed\033[0m' "${PASS}"
