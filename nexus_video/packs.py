@@ -308,6 +308,34 @@ def _pack_to_manifest_entry(pack: PackInfo) -> dict:
     }
 
 
+def scan_raw_videos(custom_dir: Path) -> list[dict]:
+    """Find bare video files at the root of custom_dir (no pack.json required).
+
+    Scans only the top-level of custom_dir; subdirectories are ignored (those
+    are normal packs and handled by discover_packs).  Any file whose extension
+    is in SUPPORTED_VIDEO_EXTS becomes a "raw" video entry.
+
+    Returns a list of dicts:
+        {"filename": str, "path": Path, "pack_id": str, "name": str}
+
+    Pack IDs use the prefix "raw__" to avoid collision with normal pack IDs.
+    """
+    import re as _re
+    result: list[dict] = []
+    if not custom_dir.is_dir():
+        return result
+    for entry in sorted(custom_dir.iterdir()):
+        if entry.is_file() and entry.suffix.lower() in SUPPORTED_VIDEO_EXTS:
+            pack_id = "raw__" + _re.sub(r"[^a-zA-Z0-9_-]", "_", entry.stem)
+            result.append({
+                "filename": entry.name,
+                "path":     entry,
+                "pack_id":  pack_id,
+                "name":     entry.stem,
+            })
+    return result
+
+
 def generate_manifest(
     builtin_dir: Path = BUILTIN_DIR,
     custom_dir:  Path = CUSTOM_DIR,

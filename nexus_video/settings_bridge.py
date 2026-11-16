@@ -68,6 +68,65 @@ def _write_service_config(pack_id: str, scale_mode: str, config_path: Path) -> N
         json.dump({"pack": pack_id, "scale": scale_mode}, fh, indent=2)
 
 
+def list_raw_videos(build_dir: Path, custom_dir: Path) -> list[dict]:
+    """Return raw video files in custom_dir with their build status.
+
+    Each entry: {"filename", "path", "pack_id", "name", "built" (bool)}.
+    """
+    from .packs import scan_raw_videos
+    items = scan_raw_videos(custom_dir)
+    for item in items:
+        item["built"] = build_is_ready(build_dir, item["pack_id"])
+    return items
+
+
+def build_raw_video_pack(video_path: Path, build_dir: Path) -> str:
+    """Build a pack output directory from a single raw video file.
+
+    The video is used as *both* intro and loop — the boot player handles
+    scaling via ffmpeg at play time, so no re-encode is needed here.
+    A still.rgb565 thumbnail is extracted from the first usable frame.
+
+    Returns the pack_id (str).
+    Raises OSError or subprocess.SubprocessError on failure.
+    """
+    import re
+    import shutil
+    import subprocess
+
+    pack_id = "raw__" + re.sub(r"[^a-zA-Z0-9_-]", "_", video_path.stem)
+    out_dir  = build_dir / pack_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy MP4 as intro and loop (player scales on-the-fly via ffmpeg)
+    shutil.copy2(video_path, out_dir / "intro.mp4")
+    shutil.copy2(video_path, out_dir / "loop.mp4")
+
+    # Extract one frame as still.rgb565 thumbnail (fast — no encode)
+    still_path    = out_dir / "still.rgb565"
+    expected_size = 800 * 480 * 2
+    cmd = [
+        "ffmpeg", "-y", "-nostdin", "-v", "error",
+        "-ss", "0.1",
+        "-i", str(video_path),
+        "-vframes", "1",
+        "-vf", (
+            "scale=800:480:force_original_aspect_ratio=decrease,"
+            "pad=800:480:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+        ),
+        "-f", "rawvideo", "-pix_fmt", "rgb565le",
+        str(still_path),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        if not still_path.exists() or still_path.stat().st_size != expected_size:
+            still_path.write_bytes(bytes(expected_size))   # fallback black frame
+    except (subprocess.SubprocessError, OSError):
+        still_path.write_bytes(bytes(expected_size))       # fallback black frame
+
+    return pack_id
+
+
 def build_is_ready(build_dir: Path, pack_id: str) -> bool:
     """True when the pack has a complete converted output (intro + loop + still)."""
     pack_build = build_dir / pack_id
