@@ -82,7 +82,7 @@ if ! $DRY_RUN; then
   PREFLIGHT="${DEPLOY_DIR}/preflight.sh"
   if [[ -x "${PREFLIGHT}" ]]; then
     log "Running hardware preflight check..."
-    if ! su -s /bin/bash "${TARGET_USER}" -- "${PREFLIGHT}"; then
+    if ! runuser -u "${TARGET_USER}" -- "${PREFLIGHT}"; then
       echo ""
       echo "  INSTALLATION BLOCKED — Minimum system requirements not met."
       echo "  Resolve the failed checks above, then re-run install.sh."

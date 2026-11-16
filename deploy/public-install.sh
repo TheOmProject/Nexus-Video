@@ -82,7 +82,7 @@ log "Step 1/4: Preflight check"
 PREFLIGHT="${SCRIPT_DIR}/preflight.sh"
 if [[ -x "${PREFLIGHT}" ]]; then
   if ! $DRY_RUN; then
-    if ! su -s /bin/bash "${TARGET_USER}" -- "${PREFLIGHT}"; then
+    if ! runuser -u "${TARGET_USER}" -- "${PREFLIGHT}"; then
       die "Preflight check failed — resolve the issues above and retry."
     fi
   else
@@ -115,7 +115,7 @@ for pack_dir in "${REPO_DIR}/packs/builtin"/*/; do
     log "  [dry-run] python3 ${REPO_DIR}/nexus_video_cli.py convert --pack ${pack_id} --scale-mode fit"
     PACKS_OK+=("${pack_id}")
   else
-    if su -s /bin/bash "${TARGET_USER}" -- \
+    if runuser -u "${TARGET_USER}" -- \
         python3 "${REPO_DIR}/nexus_video_cli.py" convert \
           --pack "${pack_id}" --scale-mode fit 2>&1; then
       PACKS_OK+=("${pack_id}")
