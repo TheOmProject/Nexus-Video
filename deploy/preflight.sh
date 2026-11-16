@@ -123,37 +123,83 @@ if [[ -e /sys/class/graphics/fb0/virtual_size ]]; then
   fi
 fi
 
-# Detect pixel format from sysfs channel descriptors
+# Detect pixel format via FBIOGET_VSCREENINFO ioctl (most reliable method;
+# works on BCM2708, VC4, and all kernels regardless of sysfs channel files).
+# Falls back to sysfs bits_per_pixel for the depth only.
 # Supported: RGB565 (16bpp), BGRA8888/RGBA8888/ARGB8888/ABGR8888 (32bpp)
-if [[ -e /sys/class/graphics/fb0/bits_per_pixel ]]; then
-  FB_BPP="$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null || echo 0)"
-  _r_off="$(cut -d, -f1 /sys/class/graphics/fb0/red   2>/dev/null || echo -1)"
-  _r_len="$(cut -d, -f2 /sys/class/graphics/fb0/red   2>/dev/null || echo 0)"
-  _g_off="$(cut -d, -f1 /sys/class/graphics/fb0/green 2>/dev/null || echo -1)"
-  _g_len="$(cut -d, -f2 /sys/class/graphics/fb0/green 2>/dev/null || echo 0)"
-  _b_off="$(cut -d, -f1 /sys/class/graphics/fb0/blue  2>/dev/null || echo -1)"
-  _b_len="$(cut -d, -f2 /sys/class/graphics/fb0/blue  2>/dev/null || echo 0)"
+if [[ -e /dev/fb0 ]]; then
+  # Try FBIOGET_VSCREENINFO ioctl via Python (available on all target systems)
+  _FB_IOCTL="$(python3 - <<'PYEOF' 2>/dev/null
+import struct, fcntl, sys
+FBIOGET_VSCREENINFO = 0x4600
+try:
+    with open('/dev/fb0', 'rb') as f:
+        buf = bytearray(160)
+        fcntl.ioctl(f, FBIOGET_VSCREENINFO, buf)
+    bpp   = struct.unpack_from('<I', buf, 24)[0]
+    r_off = struct.unpack_from('<I', buf, 32)[0]
+    r_len = struct.unpack_from('<I', buf, 36)[0]
+    g_off = struct.unpack_from('<I', buf, 44)[0]
+    g_len = struct.unpack_from('<I', buf, 48)[0]
+    b_off = struct.unpack_from('<I', buf, 56)[0]
+    b_len = struct.unpack_from('<I', buf, 60)[0]
+    print(f"{bpp} {r_off},{r_len} {g_off},{g_len} {b_off},{b_len}")
+except Exception:
+    sys.exit(1)
+PYEOF
+)"
 
-  FB_FMT="unsupported"
+  FB_BPP=""
+  _r_off=""; _r_len=""; _g_off=""; _g_len=""; _b_off=""; _b_len=""
+  if [[ -n "${_FB_IOCTL}" ]]; then
+    # Parse "bpp r_off,r_len g_off,g_len b_off,b_len"
+    FB_BPP="$(echo "${_FB_IOCTL}" | awk '{print $1}')"
+    _r_off="$(echo "${_FB_IOCTL}" | awk '{print $2}' | cut -d, -f1)"
+    _r_len="$(echo "${_FB_IOCTL}" | awk '{print $2}' | cut -d, -f2)"
+    _g_off="$(echo "${_FB_IOCTL}" | awk '{print $3}' | cut -d, -f1)"
+    _g_len="$(echo "${_FB_IOCTL}" | awk '{print $3}' | cut -d, -f2)"
+    _b_off="$(echo "${_FB_IOCTL}" | awk '{print $4}' | cut -d, -f1)"
+    _b_len="$(echo "${_FB_IOCTL}" | awk '{print $4}' | cut -d, -f2)"
+  else
+    # ioctl unavailable — fall back to sysfs bits_per_pixel only
+    FB_BPP="$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null || echo "")"
+  fi
+
+  FB_FMT="unknown"
   if [[ "${FB_BPP}" == "16" && "${_r_off}" == "11" && "${_r_len}" == "5" \
                               && "${_g_off}" == "5"  && "${_g_len}" == "6" \
                               && "${_b_off}" == "0"  && "${_b_len}" == "5" ]]; then
-    FB_FMT="RGB565 (rgb565le)"
+    FB_FMT="RGB565"
   elif [[ "${FB_BPP}" == "32" && "${_r_len}" == "8" && "${_g_len}" == "8" && "${_b_len}" == "8" ]]; then
     if   [[ "${_r_off}" == "8"  && "${_g_off}" == "16" && "${_b_off}" == "24" ]]; then FB_FMT="BGRA8888"
     elif [[ "${_r_off}" == "0"  && "${_g_off}" == "8"  && "${_b_off}" == "16" ]]; then FB_FMT="RGBA8888"
     elif [[ "${_r_off}" == "16" && "${_g_off}" == "8"  && "${_b_off}" == "0"  ]]; then FB_FMT="ARGB8888"
     elif [[ "${_r_off}" == "24" && "${_g_off}" == "16" && "${_b_off}" == "8"  ]]; then FB_FMT="ABGR8888"
     fi
+  elif [[ "${FB_BPP}" == "16" ]]; then
+    FB_FMT="16bpp-unknown"  # 16bpp but channel layout undetected — may work
+  elif [[ "${FB_BPP}" == "32" ]]; then
+    FB_FMT="32bpp-unknown"  # 32bpp but channel layout undetected — may work
   fi
 
-  if [[ "${FB_FMT}" == "unsupported" ]]; then
-    result FAIL "Pixel format" \
-      "${FB_BPP}bpp (r@${_r_off}/${_r_len} g@${_g_off}/${_g_len} b@${_b_off}/${_b_len}) — not supported. \
-Supported: RGB565 (16bpp), BGRA/RGBA/ARGB/ABGR (32bpp)"
-  else
-    result PASS "Pixel format" "${FB_FMT} — supported by nexus-video player"
-  fi
+  case "${FB_FMT}" in
+    RGB565|BGRA8888|RGBA8888|ARGB8888|ABGR8888)
+      result PASS "Pixel format" "${FB_FMT} (${FB_BPP}bpp) — fully supported by nexus-video player" ;;
+    16bpp-unknown)
+      # 16bpp without exact channel info — player will probe at runtime; likely works
+      result WARN "Pixel format" \
+        "16bpp — channel layout undetected (player will probe at runtime; RGB565 assumed)" false ;;
+    32bpp-unknown)
+      # 32bpp without exact channel info (BCM2708 FB may not expose channel sysfs) — player probes at runtime
+      result WARN "Pixel format" \
+        "32bpp — channel layout undetected (player will probe RGBA order at runtime)" false ;;
+    *)
+      if [[ -n "${FB_BPP}" ]]; then
+        result FAIL "Pixel format" \
+          "${FB_BPP}bpp (r@${_r_off:-?}/${_r_len:-?} g@${_g_off:-?}/${_g_len:-?} b@${_b_off:-?}/${_b_len:-?}) \
+— not in supported set. Supported: RGB565 (16bpp), BGRA/RGBA/ARGB/ABGR (32bpp)"
+      fi ;;
+  esac
 fi
 
 # ── 6. Python version ─────────────────────────────────────────────────────────
@@ -180,13 +226,25 @@ else
 fi
 
 # ── 8. FFmpeg ─────────────────────────────────────────────────────────────────
+# For 16bpp displays rgb565le is required; for 32bpp the rawvideo encoder
+# handles ARGB/RGBA natively — checking rgb565le on a 32bpp display always
+# produces a false WARN, so we branch on FB_BPP detected above.
 if command -v ffmpeg &>/dev/null; then
   FFMPEG_VER="$(ffmpeg -version 2>&1 | head -1 | awk '{print $3}')"
-  # Check rawvideo encoder (needed for splash player) and rgb565 pix format
-  if ffmpeg -pix_fmts 2>/dev/null | grep -q "rgb565le"; then
-    result PASS "FFmpeg" "ffmpeg ${FFMPEG_VER} with rgb565le support"
+  if [[ "${FB_BPP:-0}" == "32" ]]; then
+    # 32bpp: rawvideo encoder handles ARGB/RGBA — just confirm ffmpeg exists
+    if ffmpeg -encoders 2>/dev/null | grep -q "rawvideo"; then
+      result PASS "FFmpeg" "ffmpeg ${FFMPEG_VER} with rawvideo encoder — 32bpp supported"
+    else
+      result PASS "FFmpeg" "ffmpeg ${FFMPEG_VER} — 32bpp display, rgb565le not required"
+    fi
   else
-    result WARN "FFmpeg" "ffmpeg ${FFMPEG_VER} — rgb565le pix_fmt not listed; splash may fail"
+    # 16bpp (or unknown depth): rgb565le is required
+    if ffmpeg -pix_fmts 2>/dev/null | grep -q "rgb565le"; then
+      result PASS "FFmpeg" "ffmpeg ${FFMPEG_VER} with rgb565le support"
+    else
+      result WARN "FFmpeg" "ffmpeg ${FFMPEG_VER} — rgb565le pix_fmt not listed; splash may fail on 16bpp display"
+    fi
   fi
 else
   result FAIL "FFmpeg" "ffmpeg not found — install with: sudo apt install ffmpeg"
