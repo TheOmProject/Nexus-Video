@@ -169,18 +169,32 @@ else
   systemctl daemon-reload
 fi
 
-log "  Running migrate.sh (nexus-splash → nexus-video at next boot)..."
-if [[ -x "${MIGRATE_SH}" ]]; then
-  if $DRY_RUN; then
-    log "  [dry-run] sudo ${MIGRATE_SH} --dry-run"
+# Determine service activation path:
+#   nexus-splash present → run migrate.sh (atomic disable-splash / enable-video)
+#   nexus-splash absent  → fresh install, enable nexus-video.service directly
+if [[ -f "/etc/systemd/system/nexus-splash.service" ]]; then
+  log "  nexus-splash detected — migrating (nexus-splash → nexus-video at next boot)..."
+  if [[ -f "${MIGRATE_SH}" ]]; then
+    if $DRY_RUN; then
+      log "  [dry-run] bash ${MIGRATE_SH} --dry-run"
+    else
+      bash "${MIGRATE_SH}"
+    fi
   else
-    bash "${MIGRATE_SH}"
+    warn "nexus-splash is installed but migrate.sh not found at ${MIGRATE_SH}"
+    warn "Enabling nexus-video.service directly — disable nexus-splash.service manually"
+    if ! $DRY_RUN; then
+      systemctl enable nexus-video.service
+      log "  nexus-video.service enabled"
+    fi
   fi
 else
-  warn "migrate.sh not found — service installed but not activated"
-  if ! $DRY_RUN; then
+  log "  No nexus-splash detected — fresh install, enabling nexus-video.service directly"
+  if $DRY_RUN; then
+    log "  [dry-run] systemctl enable nexus-video.service"
+  else
     systemctl enable nexus-video.service
-    log "  nexus-video.service enabled directly"
+    log "  nexus-video.service enabled"
   fi
 fi
 

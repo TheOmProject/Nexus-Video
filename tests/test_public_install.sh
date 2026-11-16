@@ -316,6 +316,38 @@ test_runuser_used() {
   fi
 }
 
+# ── migrate.sh: -x check replaced by -f + nexus-splash detection ─────────────
+# Regression: migrate.sh was not executable in git (100644), causing -x to fail
+# even when the file existed, so the service was silently not activated.
+test_migrate_uses_file_not_exec_check() {
+  # The installer must NOT rely solely on -x for migrate.sh (file may not be executable
+  # when cloned without +x bit). It should check -f or test file existence another way.
+  if grep -q 'MIGRATE_SH' "${INSTALLER}"; then
+    if grep -q '\-x.*MIGRATE_SH\|MIGRATE_SH.*-x' "${INSTALLER}" && \
+       ! grep -q '\-f.*MIGRATE_SH\|MIGRATE_SH.*-f' "${INSTALLER}"; then
+      _fail "migrate.sh -x check regression" \
+        "installer uses -x for migrate.sh but not -f; file may not have +x bit after git clone"
+    else
+      _pass "migrate.sh checked with -f (not just -x) — works without execute permission"
+    fi
+  else
+    _skip "migrate.sh check" "MIGRATE_SH not referenced in installer"
+  fi
+}
+
+# ── service activation: fresh install path without nexus-splash ──────────────
+test_fresh_install_enables_service_directly() {
+  # For a fresh install (no nexus-splash), the installer must enable nexus-video.service
+  # directly rather than relying on migrate.sh.
+  if grep -q 'nexus-splash.service' "${INSTALLER}" && \
+     grep -q 'systemctl enable nexus-video.service' "${INSTALLER}"; then
+    _pass "Fresh install path: nexus-splash detection present, direct enable fallback present"
+  else
+    _fail "Fresh install service activation" \
+      "installer must detect nexus-splash absence and enable nexus-video.service directly"
+  fi
+}
+
 # ── run all tests ──────────────────────────────────────────────────────────
 printf '\nNexus Video — Public Installer Tests\n'
 printf '=====================================\n\n'
@@ -339,6 +371,8 @@ test_corrupt_pack_handled
 test_nv_failure_ns_intact
 test_no_su_shell_python
 test_runuser_used
+test_migrate_uses_file_not_exec_check
+test_fresh_install_enables_service_directly
 
 echo ""
 printf 'Results: \033[32m%d passed\033[0m' "${PASS}"
