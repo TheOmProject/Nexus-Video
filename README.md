@@ -61,33 +61,31 @@ you browse, preview, and switch packs without touching the terminal.
 
 ## Installation
 
-**Via Nexus Screen bootstrap (recommended — installs Nexus Screen and Nexus Video together):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TheOmProject/Nexus-Screen/main/deploy/bootstrap.sh | bash -s -- --with-video
+curl -fsSL https://raw.githubusercontent.com/TheOmProject/Nexus-Screen/main/deploy/bootstrap.sh | bash
 ```
 
-**Standalone — add to an existing Nexus Screen installation:**
+> Run as your normal user, not as root. The script uses `sudo` only where required.
+
+The unified installer offers Nexus Video as an optional add-on during setup. It handles
+hardware checks, dependencies, conversion of the built-in video packs, and service
+registration — no manual commands required.
+
+**Add to an existing Nexus Screen installation:**
 ```bash
-# 1. Clone the repository
 git clone https://github.com/TheOmProject/Nexus-Video.git ~/nexus-video
-
-# 2. Run the hardware preflight check (no changes made)
-bash ~/nexus-video/deploy/preflight.sh
-
-# 3. Install (requires sudo)
 sudo bash ~/nexus-video/deploy/public-install.sh
 ```
 
 The installer:
-1. Runs a hardware preflight check; stops with "INSTALLATION BLOCKED" if requirements are not met — no system changes are made.
+1. Runs a hardware preflight check — stops with "INSTALLATION BLOCKED" if requirements are not met.
 2. Converts the built-in video packs from source MP4s (requires FFmpeg).
 3. Configures and enables `nexus-video.service`.
-4. Disables `nexus-splash.service` (Nexus Screen's built-in static splash) — changes take effect at next boot.
+4. If upgrading from nexus-splash, migrates at next boot; otherwise enables directly.
 
 **On update**, your `config.json` (pack selection) and `packs/custom/` (custom packs) are preserved.
 
-> **Note:** `install.sh` in the same directory is the development installer and requires
-> pre-built artifacts. Use `public-install.sh` for the standard user workflow.
+For non-interactive, repair, and advanced options see the [docs/](docs/) directory.
 
 ---
 

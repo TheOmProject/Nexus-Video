@@ -102,9 +102,18 @@ def build_raw_video_pack(video_path: Path, build_dir: Path) -> str:
     shutil.copy2(video_path, out_dir / "intro.mp4")
     shutil.copy2(video_path, out_dir / "loop.mp4")
 
+    # Detect display format for the still thumbnail (supports 16bpp and 32bpp displays)
+    try:
+        from nexus_video.detect import detect_display
+        _display = detect_display()
+        pix_fmt       = _display.pix_fmt or "rgb565le"
+        expected_size = _display.frame_bytes
+    except Exception:
+        pix_fmt       = "rgb565le"
+        expected_size = 800 * 480 * 2
+
     # Extract one frame as still.rgb565 thumbnail (fast — no encode)
-    still_path    = out_dir / "still.rgb565"
-    expected_size = 800 * 480 * 2
+    still_path = out_dir / "still.rgb565"
     cmd = [
         "ffmpeg", "-y", "-nostdin", "-v", "error",
         "-ss", "0.1",
@@ -114,7 +123,7 @@ def build_raw_video_pack(video_path: Path, build_dir: Path) -> str:
             "scale=800:480:force_original_aspect_ratio=decrease,"
             "pad=800:480:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
         ),
-        "-f", "rawvideo", "-pix_fmt", "rgb565le",
+        "-f", "rawvideo", "-pix_fmt", pix_fmt,
         str(still_path),
     ]
     try:
